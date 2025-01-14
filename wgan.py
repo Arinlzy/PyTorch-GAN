@@ -87,10 +87,69 @@ class Discriminator(nn.Module):
         validity = self.model(img_flat)
         return validity
 
+class ConvGenerator(nn.Module):
+    def __init__(self, latent_dim, img_channels, img_size):
+        super(ConvGenerator, self).__init__()
+        self.init_size = img_size // 4  # 初始分辨率
+        self.fc = nn.Linear(latent_dim, 128 * self.init_size * self.init_size)
+
+        self.conv_blocks = nn.Sequential(
+            nn.BatchNorm2d(128),
+            nn.Upsample(scale_factor=2),  # 上采样
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, img_channels, kernel_size=3, stride=1, padding=1),
+            nn.Tanh(),  # 输出范围 [-1, 1]
+        )
+
+    def forward(self, z):
+        out = self.fc(z)
+        out = out.view(out.size(0), 128, self.init_size, self.init_size)  # reshape 为特征图
+        img = self.conv_blocks(out)
+        return img
+
+class ConvDiscriminator(nn.Module):
+    def __init__(self, img_channels, img_size):
+        super(ConvDiscriminator, self).__init__()
+        def conv_block(in_channels, out_channels, bn=True):
+            layers = [nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1)]
+            if bn:
+                layers.append(nn.BatchNorm2d(out_channels))
+            layers.append(nn.LeakyReLU(0.2, inplace=True))
+            return layers
+
+        self.model = nn.Sequential(
+            *conv_block(img_channels, 64, bn=False),
+            *conv_block(64, 128),
+            *conv_block(128, 256),
+            *conv_block(256, 512),
+        )
+
+        ds_size = 2  # 每层 stride=2 的卷积将尺寸减半
+        self.fc = nn.Linear(512 * ds_size * ds_size, 1)
+
+    def forward(self, img):
+        out = self.model(img)
+        out = out.view(out.size(0), -1)  # 展平
+
+        validity = self.fc(out)
+        return validity
+
 
 # Initialize generator and discriminator
-generator = Generator().to(device)
-discriminator = Discriminator().to(device)
+# generator = Generator().to(device)
+# discriminator = Discriminator().to(device)
+
+# 替换生成器和判别器
+generator = ConvGenerator(latent_dim=opt.latent_dim, img_channels=opt.channels, img_size=opt.img_size).to(device)
+discriminator = ConvDiscriminator(img_channels=opt.channels, img_size=opt.img_size).to(device)
+
+
 
 # if cuda:
 #     generator.cuda()
